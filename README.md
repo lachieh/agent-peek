@@ -199,6 +199,25 @@ sessionseek-codex  codex    active  0s ago   file    ~/Documents/sessionseek/ses
 The `NAME` column is the selector to use with `peek at`. Raw ids stay available
 with `peek list --ids`, and JSON output includes both `id` and `displayName`.
 
+### Monitor selected sessions
+
+`peek monitor` watches explicitly registered sessions from any adapter. It derives
+health from adapter execution outcomes, structured activity, recent tool errors,
+and a configurable stale threshold. Monitoring is read-only: it never resumes or
+modifies a session.
+
+```bash
+peek monitor add <session> --stale-after 10m
+peek monitor list
+peek monitor run --once --json
+peek monitor watch --interval 30s
+peek monitor remove <session>
+```
+
+State is stored under `~/.agent-peek/monitor.json`. A run reports only health
+transitions; recovery actions remain harness-specific and are not inferred from a
+provider failure.
+
 Peek at a session by display name, id, tag, or cwd:
 
 ```bash

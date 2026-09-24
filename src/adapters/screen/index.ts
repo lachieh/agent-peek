@@ -19,6 +19,8 @@ const adapter: Adapter = {
   // A multiplexer hosting someone else's session: scrollback text, no structure.
   observes: [],
 
+  lastSeenIsActivity: false,
+
   async scan(): Promise<SessionEntry[]> {
     let output: string;
     try {
@@ -78,7 +80,7 @@ const adapter: Adapter = {
       msgIndex: lines.length,
       tail: terminalCursorTail(lines),
     });
-    return { messages, nextCursor, eof: true };
+    return { messages, nextCursor, eof: true, ...(delta ? { activityAt: new Date().toISOString() } : {}) };
   },
 };
 

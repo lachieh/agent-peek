@@ -46,6 +46,25 @@ available with `peek list --ids`, and JSON rows carry `id`, `name` and
 process liveness; `activity` in `peek at` is what the agent is doing now
 (tool-running, thinking, idle).
 
+## Monitor selected sessions
+
+`peek monitor` watches explicitly registered sessions from any adapter. It derives
+health from adapter execution outcomes, structured activity, recent tool errors,
+and a configurable stale threshold. It is read-only: it never resumes or modifies
+a session.
+
+```bash
+peek monitor add <session> --stale-after 10m
+peek monitor list
+peek monitor run --once --json
+peek monitor watch --interval 30s
+peek monitor remove <session>
+```
+
+State is stored under `~/.agent-peek/monitor.json`. Runs report health transitions;
+recovery actions remain harness-specific and are not inferred from provider
+failures.
+
 ## Peek at a session
 
 Select by display name, id, tag, or cwd:

@@ -41,6 +41,7 @@ import { buildUsageReport } from "../usage/report.js";
 import type { GroupBy, UsageRow } from "../usage/index.js";
 import type { PostType } from "../feed/schema.js";
 import { resolveAuthor } from "../feed/identity.js";
+import { Monitor, MonitorStore } from "../monitor/index.js";
 
 const execFileAsync = promisify(execFile);
 const TERMINAL_ADAPTERS = new Set(["tmux", "screen"]);
@@ -54,6 +55,9 @@ export async function run(argv: string[] = process.argv): Promise<number> {
   cli.example("peek coord");
   cli.example("peek check src/core/engine.ts");
   cli.example("peek claim src/core/engine.ts --ttl 2m");
+  cli.example("peek monitor add opencode:ses_123 --stale-after 10m");
+  cli.example("peek monitor run --once --json");
+  cli.example("peek monitor watch --interval 30s");
   cli.example("peek version");
   cli.example("peek update");
   cli.example("peek ui");
@@ -76,6 +80,97 @@ export async function run(argv: string[] = process.argv): Promise<number> {
       const result = { name: "agent-peek", version: VERSION };
       if (opts.json) console.log(JSON.stringify(result, null, 2));
       else console.log(`agent-peek ${VERSION}`);
+    });
+
+  cli.command("monitor <action> [selector]", "Watch registered sessions across adapters and report health transitions.")
+    .usage("monitor <add|list|remove|run|watch> [selector] [--stale-after <duration>] [--label <name>] [--interval <duration>] [--json]")
+    .example("peek monitor add opencode:ses_123 --stale-after 10m")
+    .example("peek monitor list --json")
+    .example("peek monitor run --once --json")
+    .example("peek monitor watch --interval 30s")
+    .option("--stale-after <duration>", "Stale threshold such as 30s, 5m, or 1h", { default: "10m" })
+    .option("--label <name>", "Human-readable label for the monitored session")
+    .option("--interval <duration>", "Polling interval for watch mode", { default: "30s" })
+    .option("--once", "Run one monitoring pass and exit")
+    .option("--json", "Output machine-readable JSON")
+    .action(async (action, selector, opts) => {
+      const monitorAction = String(action);
+      const staleAfterMs = monitorAction === "add" ? parseDurationMs(opts.staleAfter, "--stale-after") : undefined;
+      const intervalMs = monitorAction === "watch" ? parseDurationMs(opts.interval, "--interval") : undefined;
+      const engine = await createEngine({ withExternal: true });
+      const store = new MonitorStore();
+      const monitor = new Monitor(engine, store);
+
+      if (monitorAction === "add") {
+        if (!selector) usageError("monitor add requires a session selector");
+        const result = await engine.peek(String(selector), { mode: "structured" });
+        const sessionId = result.snapshot.sessionId;
+        const adapter = sessionId.includes(":") ? sessionId.slice(0, sessionId.indexOf(":")) : "unknown";
+        const record = await store.add({
+          sessionId,
+          adapter,
+          label: opts.label ? String(opts.label) : undefined,
+          staleAfterMs: staleAfterMs!
+        });
+        if (opts.json) console.log(JSON.stringify(record, null, 2));
+        else console.log(`monitoring ${record.sessionId}${record.label ? ` (${record.label})` : ""}`);
+        return;
+      }
+
+      if (monitorAction === "list" || monitorAction === "status") {
+        const records = await store.list();
+        if (opts.json) { console.log(JSON.stringify(records, null, 2)); return; }
+        if (records.length === 0) { console.log("no monitored sessions"); return; }
+        for (const record of records) {
+          const next = record.detail ? ` · ${oneLine(record.detail)}` : "";
+          console.log(`${record.sessionId}\t${record.health}\t${record.lastObservedAt ?? "never"}${next}`);
+        }
+        return;
+      }
+
+      if (monitorAction === "remove") {
+        if (!selector) usageError("monitor remove requires a session id");
+        const removed = await store.remove(String(selector));
+        if (opts.json) console.log(JSON.stringify({ removed, sessionId: String(selector) }, null, 2));
+        else console.log(removed ? `removed ${selector}` : `${selector} was not monitored`);
+        return;
+      }
+
+      if (monitorAction === "run") {
+        if (!opts.once) usageError("monitor run requires --once; use monitor watch for continuous polling");
+        const result = await monitor.runOnce();
+        if (opts.json) { console.log(JSON.stringify(result, null, 2)); return; }
+        console.log(`checked ${result.checked} session${result.checked === 1 ? "" : "s"}; ${result.transitions.length} transition${result.transitions.length === 1 ? "" : "s"}`);
+        for (const transition of result.transitions) {
+          console.log(`${transition.sessionId}: ${transition.from} → ${transition.to}${transition.detail ? ` · ${transition.detail}` : ""}`);
+        }
+        return;
+      }
+
+      if (monitorAction === "watch") {
+        let stopping = false;
+        const stop = () => { stopping = true; };
+        process.once("SIGINT", stop);
+        process.once("SIGTERM", stop);
+        try {
+          while (!stopping) {
+            const result = await monitor.runOnce();
+            if (opts.json) console.log(JSON.stringify(result));
+            else {
+              for (const transition of result.transitions) {
+                console.log(`${transition.sessionId}: ${transition.from} → ${transition.to}${transition.detail ? ` · ${transition.detail}` : ""}`);
+              }
+            }
+            if (!stopping) await delay(intervalMs!, () => stopping);
+          }
+        } finally {
+          process.removeListener("SIGINT", stop);
+          process.removeListener("SIGTERM", stop);
+        }
+        return;
+      }
+
+      usageError(`unknown monitor action: ${monitorAction}`);
     });
 
   cli.command("update", "Update the global agent-peek install from npm.")
@@ -1980,6 +2075,27 @@ function parseOffset(value: unknown): number | undefined {
   });
 }
 
+function delay(ms: number, stopped: () => boolean): Promise<void> {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const tick = () => {
+      if (stopped() || Date.now() - started >= ms) resolve();
+      else setTimeout(tick, Math.min(250, ms));
+    };
+    tick();
+  });
+}
+
+function usageError(message: string): never {
+  fail({
+    code: 5,
+    error: "invalid_usage",
+    message,
+    hint: "Run `peek monitor --help` for the supported actions.",
+    next: ["peek monitor list", "peek monitor run --once", "peek monitor watch"],
+  });
+}
+
 function fail(opts: {
   code: number;
   error: string;
@@ -2025,6 +2141,13 @@ function printFocusedHelp(command?: string): void {
       "peek list --json                  # script-friendly session list",
       "peek list --files                 # include active/recent file context",
       "peek list adapters                # show adapter names",
+    ],
+    monitor: [
+      "peek monitor add <session>              # opt a session into monitoring",
+      "peek monitor list                       # show persisted monitor health",
+      "peek monitor run --once --json          # evaluate one snapshot",
+      "peek monitor watch --interval 30s        # poll continuously",
+      "peek monitor remove <session>           # stop monitoring",
     ],
     at: [
       "peek at <selector> --mode brief       # compact local status",

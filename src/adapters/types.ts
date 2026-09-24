@@ -6,6 +6,8 @@ export interface AdapterReadResult {
   messages: RawMessage[];
   nextCursor: Cursor;
   eof: boolean;
+  /** Timestamp of actual new activity, when the adapter can distinguish it from a scan. */
+  activityAt?: string;
 }
 
 export interface Adapter {
@@ -20,6 +22,9 @@ export interface Adapter {
    * Omitted means none, which is honest for an adapter that surfaces no tool calls.
    */
   observes?: InvocationKind[];
+
+  /** False when lastSeen is a scan timestamp rather than an activity timestamp. */
+  lastSeenIsActivity?: boolean;
 
   /** Discover sessions on disk. Returns SessionEntry[]; loader merges into registry. */
   scan(): Promise<SessionEntry[]>;

@@ -89,6 +89,8 @@ export type {
 
 export { AdapterLoader, discoverExternal } from "./adapters/loader.js";
 export type { Adapter, AdapterReadResult, AdapterModule } from "./adapters/types.js";
+export { Monitor, MonitorStore } from "./monitor/index.js";
+export type { MonitorHealth, MonitorRecord, MonitorRunResult, MonitorTransition } from "./monitor/index.js";
 
 import claudeCode from "./adapters/claude-code/index.js";
 import codex from "./adapters/codex/index.js";

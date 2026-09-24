@@ -11,6 +11,7 @@ export interface SessionExecution {
   outcome?: SessionOutcome;
   at?: string;
   sequence?: number;
+  detail?: string;
 }
 
 export interface SessionEntry {
